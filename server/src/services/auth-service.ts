@@ -1,12 +1,16 @@
+import type { LoginDTO } from "../dto/auth/login-dto.js";
 import type { RegisterDTO } from "../dto/auth/register-dto.js";
 import type { User } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
 import bcrypt from "bcrypt";
+import { randomBytes } from "node:crypto";
 
 export interface AuthService {
   register: (
     registerDTO: RegisterDTO,
   ) => Promise<Omit<User, "password" | "updated_at">>;
+
+  login: (loginDTO: LoginDTO) => Promise<{ accessToken: string }>;
 }
 
 export function createAuthService(): AuthService {
@@ -43,5 +47,49 @@ export function createAuthService(): AuthService {
     return createUser;
   };
 
-  return { register };
+  const login = async (loginDTO: LoginDTO) => {
+    const user = await prisma.user.findUnique({
+      where: {
+        username: loginDTO.username,
+      },
+    });
+
+    if (!user) throw new Error("Invalid Credentials");
+
+    const comparePassword = await bcrypt.compare(
+      loginDTO.password,
+      user.password,
+    );
+
+    if (!comparePassword) throw new Error("Invalid Credentials");
+
+    const token = randomBytes(30).toString("hex");
+    const hashToken = await bcrypt.hash(token, 9);
+
+    await prisma.session.updateMany({
+      where: {
+        user_id: user.id,
+      },
+      data: {
+        is_revoked: true,
+      },
+    });
+
+    const expDate = new Date();
+    expDate.setDate(expDate.getDate() + 7);
+
+    await prisma.session.create({
+      data: {
+        user_id: user.id,
+        expires_at: expDate,
+        token: hashToken,
+      },
+    });
+
+    return {
+      accessToken: token,
+    };
+  };
+
+  return { register, login };
 }

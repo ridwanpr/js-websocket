@@ -11,5 +11,14 @@ export const authController = (authService: AuthService) => {
         data: { ...result, id: result.id.toString() },
       });
     },
+
+    async login(req: Request, res: Response) {
+      const result = await authService.login(req.body);
+
+      return res.json({
+        message: "Login success",
+        accessToken: result.accessToken,
+      });
+    },
   };
 };
