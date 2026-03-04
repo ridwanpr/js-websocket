@@ -1,58 +1,83 @@
-import { WebSocketServer } from "ws";
-import type { ErrorEvent } from "ws";
-import type { IncomingMessage } from "node:http";
+import { IncomingMessage, type Server } from "node:http";
 import type { Socket } from "node:net";
-import { Buffer } from "node:buffer";
-import type { Server } from "node:http";
-import { parseAuthHeader } from "../utils/parse-auth-header.js";
-
-const onSocketError = (err: ErrorEvent) => {
-  console.error(err);
-};
-
-const map = new Map();
+import type { Buffer } from "node:buffer";
+import { WebSocketServer } from "ws";
+import { parseCookie } from "cookie";
+import { createHash } from "node:crypto";
+import { prisma } from "../lib/prisma.js";
+import type { Session } from "../generated/prisma/client.js";
 
 export const createWebSocketServer = (server: Server) => {
-  const wss = new WebSocketServer({ port: 8080 });
+  const connectedUser = new Map();
+  const wss = new WebSocketServer({ noServer: true });
 
   server.on(
     "upgrade",
-    (request: IncomingMessage, socket: Socket, head: Buffer) => {
-      socket.on("error", onSocketError);
-
-      const authHeader = request.headers.authorization;
-      if (!authHeader) {
+    async (request: IncomingMessage, socket: Socket, head: Buffer) => {
+      const token = getAccessToken(request);
+      if (!token) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
 
-      socket.removeListener("error", onSocketError);
+      const userSession = await resolveUserSession(token);
+      if (!userSession) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
 
       wss.handleUpgrade(request, socket, head, (ws) => {
-        ws.emit("connection", ws, request);
+        connectedUser.set(userSession.user_id, ws);
+
+        ws.on("error", console.error);
+        ws.on("message", (message) => {
+          console.log(
+            `Received message ${message} from user ${userSession.user_id}`,
+          );
+
+          ws.send("Hello from server");
+        });
+        ws.on("close", () => {
+          connectedUser.delete(userSession.user_id);
+        });
       });
     },
   );
 
-  wss.on("connection", (ws, request) => {
-    const authHeader = request.headers.authorization;
-    if (!authHeader) throw new Error("Unauthorized");
+  return wss;
+};
 
-    const userId = parseAuthHeader(authHeader);
+const getAccessToken = (request: IncomingMessage): string | undefined => {
+  const rawCookies = request.headers.cookie;
+  if (rawCookies) {
+    const token = parseCookie(rawCookies).accessToken;
+    if (token) return token;
+  }
 
-    map.set(userId, ws);
+  // fallback for api testing (bruno/postman)
+  // use ws://localhost:3000?token=value
+  const url = new URL(request.url!, "http://localhost");
+  return url.searchParams.get("token") ?? undefined;
+};
 
-    ws.on("error", console.error);
+const resolveUserSession = async (token: string): Promise<Session | null> => {
+  const hashedToken = createHash("sha256").update(token).digest("hex");
 
-    ws.on("message", (message) => {
-      console.log(`Received message ${message} from user ${userId}`);
-    });
-
-    ws.on("close", () => {
-      map.delete(userId);
-    });
+  const userSession = await prisma.session.findFirst({
+    where: {
+      token: hashedToken,
+    },
   });
 
-  return wss;
+  if (
+    !userSession ||
+    userSession.is_revoked ||
+    userSession.expires_at < new Date()
+  ) {
+    return null;
+  }
+
+  return userSession;
 };

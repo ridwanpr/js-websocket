@@ -16,6 +16,6 @@ createWebSocketServer(server);
 
 app.use("/api", createAuthRoute());
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on localhost:${PORT}`);
 });
