@@ -38,13 +38,32 @@ export const createWebSocketServer = (server: Server) => {
           connectedUser.set(userSession.user_id, ws);
 
           ws.on("error", console.error);
-          ws.on("message", (message) => {
-            console.log(
-              `Received message ${message} from user ${userSession.user_id}`,
-            );
 
-            ws.send("Hello from server");
+          ws.on("message", (rawMessage) => {
+            try {
+              const message = JSON.parse(rawMessage.toString());
+              console.log(message);
+              switch (message.action) {
+                case "ACTION1":
+                  // action 1
+                  break;
+                case "ACTION2":
+                  // action 2
+                  break;
+                default:
+                  ws.send(
+                    JSON.stringify({
+                      error: "UNKNOWN_ACTION",
+                      message: `Action ${message.action} is not supported.`,
+                    }),
+                  );
+              }
+            } catch (err) {
+              console.error("Failed to parse incoming WebSocket message", err);
+              ws.send(JSON.stringify({ error: "INVALID_JSON_FORMAT" }));
+            }
           });
+
           ws.on("close", () => {
             connectedUser.delete(userSession.user_id);
           });
