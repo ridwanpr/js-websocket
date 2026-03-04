@@ -6,6 +6,11 @@ import { parseCookie } from "cookie";
 import { createHash } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import type { Session } from "../generated/prisma/client.js";
+import { addProduct } from "./action/add-product.js";
+import z, { ZodError } from "zod";
+import { zParseDTO } from "../lib/zod.js";
+import { addProductDTO } from "./dto/add-product.dto.js";
+import { listProduct } from "./action/list-product.js";
 
 export const createWebSocketServer = (server: Server) => {
   const connectedUser = new Map();
@@ -31,49 +36,88 @@ export const createWebSocketServer = (server: Server) => {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request, userSession);
       });
+    },
+  );
 
-      wss.on(
-        "connection",
-        (ws: WebSocket, request: IncomingMessage, userSession: Session) => {
-          connectedUser.set(userSession.user_id, ws);
+  wss.on(
+    "connection",
+    (ws: WebSocket, request: IncomingMessage, userSession: Session) => {
+      connectedUser.set(userSession.user_id, ws);
 
-          ws.on("error", console.error);
+      ws.on("error", console.error);
 
-          ws.on("message", (rawMessage) => {
-            try {
-              const message = JSON.parse(rawMessage.toString());
-              console.log(message);
-              switch (message.action) {
-                case "ACTION1":
-                  // action 1
-                  break;
-                case "ACTION2":
-                  // action 2
-                  break;
-                default:
-                  ws.send(
-                    JSON.stringify({
-                      error: "UNKNOWN_ACTION",
-                      message: `Action ${message.action} is not supported.`,
-                    }),
-                  );
-              }
-            } catch (err) {
-              console.error("Failed to parse incoming WebSocket message", err);
-              ws.send(JSON.stringify({ error: "INVALID_JSON_FORMAT" }));
-            }
-          });
+      ws.on("message", async (rawMessage) => {
+        try {
+          const message = JSON.parse(rawMessage.toString());
 
-          ws.on("close", () => {
-            connectedUser.delete(userSession.user_id);
-          });
-        },
-      );
+          switch (message.action) {
+            case "ADD_PRODUCT":
+              const validatedMessage = await zParseDTO(
+                addProductDTO,
+                message.payload,
+              );
+              const addProductResult = await addProduct(validatedMessage);
+              ws.send(
+                JSON.stringify({
+                  message: "Add product success",
+                  data: serializeBigInt(addProductResult),
+                }),
+              );
+              return;
+            case "LIST_PRODUCT":
+              const listProductResult = await listProduct();
+              ws.send(
+                JSON.stringify({
+                  message: "Fetch product success",
+                  data: serializeBigInt(listProductResult),
+                }),
+              );
+              return;
+            default:
+              ws.send(
+                JSON.stringify({
+                  error: "UNKNOWN_ACTION",
+                  message: `Action ${message.action} is not supported.`,
+                }),
+              );
+              return;
+          }
+        } catch (err) {
+          if (err instanceof ZodError) {
+            ws.send(
+              JSON.stringify({
+                code: "VALIDATION_ERROR",
+                message: "Invalid input data",
+                errors: z.flattenError(err),
+              }),
+            );
+            return;
+          }
+
+          ws.send(
+            JSON.stringify({
+              code: "SERVER_ERROR",
+              message: err instanceof Error ? err.message : "Unknown error",
+            }),
+          );
+        }
+      });
+
+      ws.on("close", () => {
+        connectedUser.delete(userSession.user_id);
+      });
     },
   );
 
   return wss;
 };
+
+const serializeBigInt = (data: unknown) =>
+  JSON.parse(
+    JSON.stringify(data, (_, value) =>
+      typeof value === "bigint" ? value.toString() : value,
+    ),
+  );
 
 const getAccessToken = (request: IncomingMessage): string | undefined => {
   const rawCookies = request.headers.cookie;

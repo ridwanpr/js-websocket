@@ -34,3 +34,13 @@ model Session {
 
   @@map("sessions")
 }
+
+model Product {
+  id         BigInt    @id @default(autoincrement())
+  name       String    @db.VarChar(255)
+  price      Decimal   @db.Decimal()
+  created_at DateTime  @default(now())
+  updated_at DateTime? @updatedAt
+
+  @@map("products")
+}
