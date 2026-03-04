@@ -13,7 +13,8 @@ import { addProductDTO } from "./dto/add-product.dto.js";
 import { listProduct } from "./action/list-product.js";
 
 export const createWebSocketServer = (server: Server) => {
-  const connectedUser = new Map();
+  const connectedUser = new Map<bigint, Set<WebSocket>>();
+  const productSubscribers = new Set<bigint>();
   const wss = new WebSocketServer({ noServer: true });
 
   server.on(
@@ -41,8 +42,11 @@ export const createWebSocketServer = (server: Server) => {
 
   wss.on(
     "connection",
-    (ws: WebSocket, request: IncomingMessage, userSession: Session) => {
-      connectedUser.set(userSession.user_id, ws);
+    (ws: WebSocket, _request: IncomingMessage, userSession: Session) => {
+      if (!connectedUser.has(userSession.user_id)) {
+        connectedUser.set(userSession.user_id, new Set());
+      }
+      connectedUser.get(userSession.user_id)!.add(ws);
 
       ws.on("error", console.error);
 
@@ -51,6 +55,20 @@ export const createWebSocketServer = (server: Server) => {
           const message = JSON.parse(rawMessage.toString());
 
           switch (message.action) {
+            case "SUBSCRIBE_PRODUCT":
+              productSubscribers.add(userSession.user_id);
+              ws.send(
+                JSON.stringify({ message: "Subscribed to product updates" }),
+              );
+              break;
+            case "UNSUBSCRIBE_PRODUCT":
+              productSubscribers.delete(userSession.user_id);
+              ws.send(
+                JSON.stringify({
+                  message: "Unsubscribed from product updates",
+                }),
+              );
+              break;
             case "ADD_PRODUCT":
               const validatedMessage = await zParseDTO(
                 addProductDTO,
@@ -63,6 +81,23 @@ export const createWebSocketServer = (server: Server) => {
                   data: serializeBigInt(addProductResult),
                 }),
               );
+
+              // get updated product list and broadcast to all subscribers
+              const updatedList = await listProduct();
+              const broadcast = JSON.stringify({
+                event: "PRODUCT_LIST_UPDATED",
+                data: serializeBigInt(updatedList),
+              });
+
+              for (const userId of productSubscribers) {
+                const sockets = connectedUser.get(userId);
+                if (!sockets) continue;
+                for (const socket of sockets) {
+                  if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(broadcast);
+                  }
+                }
+              }
               return;
             case "LIST_PRODUCT":
               const listProductResult = await listProduct();
@@ -102,9 +137,14 @@ export const createWebSocketServer = (server: Server) => {
           );
         }
       });
-
+      
       ws.on("close", () => {
-        connectedUser.delete(userSession.user_id);
+        const userSockets = connectedUser.get(userSession.user_id);
+        if (userSockets) {
+          userSockets.delete(ws);
+          if (userSockets.size === 0) connectedUser.delete(userSession.user_id);
+        }
+        productSubscribers.delete(userSession.user_id);
       });
     },
   );
