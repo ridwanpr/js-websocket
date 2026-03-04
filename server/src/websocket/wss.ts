@@ -1,7 +1,7 @@
 import { IncomingMessage, type Server } from "node:http";
 import type { Socket } from "node:net";
 import type { Buffer } from "node:buffer";
-import { WebSocketServer } from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 import { parseCookie } from "cookie";
 import { createHash } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
@@ -29,20 +29,27 @@ export const createWebSocketServer = (server: Server) => {
       }
 
       wss.handleUpgrade(request, socket, head, (ws) => {
-        connectedUser.set(userSession.user_id, ws);
-
-        ws.on("error", console.error);
-        ws.on("message", (message) => {
-          console.log(
-            `Received message ${message} from user ${userSession.user_id}`,
-          );
-
-          ws.send("Hello from server");
-        });
-        ws.on("close", () => {
-          connectedUser.delete(userSession.user_id);
-        });
+        wss.emit("connection", ws, request, userSession);
       });
+
+      wss.on(
+        "connection",
+        (ws: WebSocket, request: IncomingMessage, userSession: Session) => {
+          connectedUser.set(userSession.user_id, ws);
+
+          ws.on("error", console.error);
+          ws.on("message", (message) => {
+            console.log(
+              `Received message ${message} from user ${userSession.user_id}`,
+            );
+
+            ws.send("Hello from server");
+          });
+          ws.on("close", () => {
+            connectedUser.delete(userSession.user_id);
+          });
+        },
+      );
     },
   );
 
