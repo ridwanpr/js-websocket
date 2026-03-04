@@ -48,8 +48,6 @@ export const createWebSocketServer = (server: Server) => {
       }
       connectedUser.get(userSession.user_id)!.add(ws);
 
-      ws.on("error", console.error);
-
       ws.on("message", async (rawMessage) => {
         try {
           const message = JSON.parse(rawMessage.toString());
@@ -137,7 +135,14 @@ export const createWebSocketServer = (server: Server) => {
           );
         }
       });
-      
+
+      ws.on("error", (err) => {
+        console.error(
+          `WebSocket error for user ${userSession.user_id}:`,
+          err.message,
+        );
+      });
+
       ws.on("close", () => {
         const userSockets = connectedUser.get(userSession.user_id);
         if (userSockets) {
