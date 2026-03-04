@@ -15,9 +15,15 @@ export const authController = (authService: AuthService) => {
     async login(req: Request, res: Response) {
       const result = await authService.login(req.body);
 
+      res.cookie("accessToken", result.accessToken, {
+        sameSite: "lax",
+        httpOnly: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        secure: process.env.NODE_ENV === "production",
+      });
+
       return res.json({
         message: "Login success",
-        accessToken: result.accessToken,
       });
     },
   };

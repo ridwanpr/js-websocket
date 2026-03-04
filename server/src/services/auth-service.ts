@@ -3,7 +3,7 @@ import type { RegisterDTO } from "../dto/auth/register-dto.js";
 import type { User } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
 import bcrypt from "bcrypt";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 export interface AuthService {
   register: (
@@ -63,8 +63,8 @@ export function createAuthService(): AuthService {
 
     if (!comparePassword) throw new Error("Invalid Credentials");
 
-    const token = randomBytes(30).toString("hex");
-    const hashToken = await bcrypt.hash(token, 9);
+    const rawToken = randomBytes(32).toString("hex");
+    const hashToken = generateSha256Hash(rawToken);
 
     await prisma.session.updateMany({
       where: {
@@ -87,8 +87,15 @@ export function createAuthService(): AuthService {
     });
 
     return {
-      accessToken: token,
+      accessToken: rawToken,
+      expireAt: expDate,
     };
+  };
+
+  const generateSha256Hash = (data: string) => {
+    const hash = createHash("sha256");
+    hash.update(data);
+    return hash.digest("hex");
   };
 
   return { register, login };
